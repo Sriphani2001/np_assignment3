@@ -3,8 +3,8 @@
 Requirements (Ubuntu 20.04LTS, adapt for your version): 
 
 
-libncurses-dev libswitch-perl libio-socket-timeout-perl libstring-random-perl \
-libstring-diff-perl libexpect-perl libdata-dump-perl libdata-dump-oneline-perl \ 
+libncurses-dev libswitch-perl libio-socket-timeout-perl libstring-random-perl \\
+libstring-diff-perl libexpect-perl libdata-dump-perl libdata-dump-oneline-perl \\
 libtest-hexstring-perl
 
 
