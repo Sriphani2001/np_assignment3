@@ -11,6 +11,7 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <netdb.h>
+#include <sstream>  // For std::istringstream
 
 #define MAX_MESSAGE_LENGTH 2048
 #define MAX_NAME_LENGTH 12
@@ -61,14 +62,24 @@ void receiveMessage() {
             std::getline(iss, content);
 
             // Handle message according to protocol
-            if (protocol == "MSG" && senderUsername != username) {
-                std::cout << content.substr(1) << std::endl;  // Output the message from other users
+            if (protocol == "MSG") {
+                // Print the sender's username and the message
+                std::cout << "[" << senderUsername << "]: " << content.substr(1) << std::endl;  // Remove leading space from content
+            } else if (protocol == "JOIN") {
+                // Print a message indicating that a user has joined the chat
+                std::cout << senderUsername << " has joined the chat." << std::endl;
+            } else if (protocol == "EXIT") {
+                // Print a message indicating that a user has left the chat
+                std::cout << senderUsername << " has left the chat." << std::endl;
             } else if (protocol == "ERROR" && senderUsername == username) {
                 std::cout << username << ": ERROR - Only 255 characters allowed in a message." << std::endl;
             }
             flushOutput();
         } else if (receive == 0) {
-            break;  // Connection closed
+            // Server disconnected
+            std::cout << "Server disconnected. Exiting chat..." << std::endl;
+            isRunning = false;
+            break;
         }
         memset(buffer, 0, sizeof(buffer));  // Clear buffer
     }
