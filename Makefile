@@ -3,15 +3,15 @@ CPP = g++
 CC = gcc
 
 # Compiler flags
-CPP_FLAGS = -std=c++11 -Wall -g
-CC_FLAGS = -w -g
+CPP_FLAGS = -std=c++11 -Wall -g -pthread
+CC_FLAGS = -Wall -g
 
 # Targets
 all: test client server
 
 # Compiling C code for ncurses-based test
 main_curses.o: main_curses.c
-	$(CC) -Wall -I. -c main_curses.c
+	$(CC) $(CC_FLAGS) -I. -c main_curses.c
 
 # Compiling C++ client code
 client.o: client.cpp
@@ -23,7 +23,7 @@ server.o: server.cpp
 
 # Linking the test executable
 test: main_curses.o
-	$(CC) -I./ -Wall main_curses.o -lncurses -o test 
+	$(CC) $(CC_FLAGS) -I./ main_curses.o -lncurses -o test
 
 # Linking the C++ client executable
 client: client.o

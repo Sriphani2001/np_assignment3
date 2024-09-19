@@ -98,7 +98,7 @@ int main(int argc, char *argv[]) {
     std::string serverInfoString = argv[1];  // Renamed to avoid conflict
     size_t colonPos = serverInfoString.find(':');
     if (colonPos == std::string::npos) {
-        std::cerr << "Invalid format. Use <IP:Port>" << std::endl;
+        std::cerr << "ERROR: Invalid format. Use <IP:Port>" << std::endl;
         return 1;
     }
     host = serverInfoString.substr(0, colonPos);
@@ -107,7 +107,7 @@ int main(int argc, char *argv[]) {
     // Validate the nickname using regex
     std::string nickname = argv[2];
     if (nickname.length() >= MAX_NAME_LENGTH || !std::regex_match(nickname, std::regex("^[A-Za-z0-9_]+$"))) {
-        std::cerr << "Invalid nickname. Must be less than " << MAX_NAME_LENGTH << " characters and contain only letters, numbers, or underscores." << std::endl;
+        std::cerr << "ERROR: Invalid nickname. Must be less than " << MAX_NAME_LENGTH << " characters and contain only letters, numbers, or underscores." << std::endl;
         return 1;
     }
     username = nickname;
@@ -123,21 +123,21 @@ int main(int argc, char *argv[]) {
 
     // Resolve server address
     if (getaddrinfo(host.c_str(), port.c_str(), &hints, &serverInfo) != 0) {
-        std::cerr << "Error resolving server address." << std::endl;
+        std::cerr << "ERROR: Error resolving server address." << std::endl;
         return 1;
     }
 
     // Create a socket
     serverSocket = socket(serverInfo->ai_family, serverInfo->ai_socktype, serverInfo->ai_protocol);
     if (serverSocket == -1) {
-        std::cerr << "Error creating socket." << std::endl;
+        std::cerr << "ERROR: Error creating socket." << std::endl;
         freeaddrinfo(serverInfo);
         return 1;
     }
 
     // Connect to server
     if (connect(serverSocket, serverInfo->ai_addr, serverInfo->ai_addrlen) == -1) {
-        std::cerr << "Error connecting to server." << std::endl;
+        std::cerr << "ERROR: Error connecting to server." << std::endl;
         close(serverSocket);
         freeaddrinfo(serverInfo);
         return 1;
@@ -147,7 +147,7 @@ int main(int argc, char *argv[]) {
     // Read server protocol greeting
     char serverProtocol[MAX_MESSAGE_LENGTH] = {};
     if (read(serverSocket, serverProtocol, sizeof(serverProtocol)) <= 0) {
-        std::cerr << "Error reading server protocol." << std::endl;
+        std::cerr << "ERROR: Error reading server protocol." << std::endl;
         close(serverSocket);
         return 1;
     }
@@ -155,7 +155,7 @@ int main(int argc, char *argv[]) {
 
     // Verify server protocol
     if (std::string(serverProtocol) != "HELLO 1\n") {
-        std::cerr << "Server protocol not supported." << std::endl;
+        std::cerr << "ERROR: Server protocol not supported." << std::endl;
         close(serverSocket);
         return 1;
     }
@@ -167,14 +167,14 @@ int main(int argc, char *argv[]) {
     // Receive server response to nickname
     char response[MAX_MESSAGE_LENGTH] = {};
     if (read(serverSocket, response, sizeof(response)) <= 0) {
-        std::cerr << "Error reading server response." << std::endl;
+        std::cerr << "ERROR: Error reading server response." << std::endl;
         close(serverSocket);
         return 1;
     }
 
     // Check if nickname is accepted
     if (std::string(response) != "OK\n") {
-        std::cerr << "Nickname not accepted by server." << std::endl;
+        std::cerr << "ERROR: Nickname not accepted by server." << std::endl;
         close(serverSocket);
         return 1;
     }
