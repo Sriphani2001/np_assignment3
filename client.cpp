@@ -11,194 +11,241 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <netdb.h>
-#include <sstream>  // For std::istringstream
+#include <sstream>
 
 #define MAX_MESSAGE_LENGTH 2048
 #define MAX_NAME_LENGTH 12
 
-std::atomic<bool> isRunning(true);  // Flag to control the running state
-int serverSocket = 0;  // Socket descriptor for server communication
-std::string username;  // Client's nickname
+using namespace std;
 
-// Function to flush the standard output
+atomic<bool> isRunning(true);  // controls the running state
+int serverSocket = 0;  // socket descriptor for server communication
+string username;  // client's nickname
+
+// flush the standard output
 void flushOutput() {
-    std::cout.flush();
+    cout.flush();
 }
 
-// Function to send messages to the server
+// signal handler for graceful shutdown on sigint (ctrl+c)
+void signalHandler(int signum) {
+    isRunning = false;
+    close(serverSocket);
+    cout << "exiting chat..." << endl;
+    exit(signum);
+}
+
+// sends messages to the server
 void sendMessage() {
-    std::string message;
-
+    string message;
     while (isRunning) {
-        flushOutput();  // Ensure output is flushed before user input
-        std::getline(std::cin, message);  // Read user input
+        flushOutput();  // flush output before user input
+        getline(cin, message);  // read user input
 
-        // Check if message exceeds maximum length
         if (message.length() > 255) {
-            std::cout << "Message too long (" << message.length() << " characters). Please limit to 255 characters." << std::endl;
+            cout << "message too long (" << message.length() << " characters). please limit to 255 characters." << endl;
+            flushOutput();
             continue;
         }
 
-        // Create the message protocol and send to the server
-        std::string protocolMessage = "MSG " + message + "\n";
-        send(serverSocket, protocolMessage.c_str(), protocolMessage.length(), 0);
-    }
-}
-
-// Function to receive messages from the server
-void receiveMessage() {
-    char buffer[MAX_MESSAGE_LENGTH] = {};
-
-    while (isRunning) {
-        int receive = recv(serverSocket, buffer, MAX_MESSAGE_LENGTH, 0);  // Receive message from server
-
-        if (receive > 0) {
-            std::string message(buffer);
-
-            // Parse protocol, username, and message content
-            std::string protocol, senderUsername, content;
-            std::istringstream iss(message);
-            iss >> protocol >> senderUsername;
-            std::getline(iss, content);
-
-            // Handle message according to protocol
-            if (protocol == "MSG") {
-                // Print the sender's username and the message
-                std::cout << "[" << senderUsername << "]: " << content.substr(1) << std::endl;  // Remove leading space from content
-            } else if (protocol == "JOIN") {
-                // Print a message indicating that a user has joined the chat
-                std::cout << senderUsername << " has joined the chat." << std::endl;
-            } else if (protocol == "EXIT") {
-                // Print a message indicating that a user has left the chat
-                std::cout << senderUsername << " has left the chat." << std::endl;
-            } else if (protocol == "ERROR" && senderUsername == username) {
-                std::cout << username << ": ERROR - Only 255 characters allowed in a message." << std::endl;
-            }
-            flushOutput();
-        } else if (receive == 0) {
-            // Server disconnected
-            std::cout << "Server disconnected. Exiting chat..." << std::endl;
+        string protocolMessage = "MSG " + message + "\n";
+        if (send(serverSocket, protocolMessage.c_str(), protocolMessage.length(), 0) == -1) {
+            cerr << "error: failed to send message to server." << endl;
             isRunning = false;
             break;
         }
-        memset(buffer, 0, sizeof(buffer));  // Clear buffer
     }
 }
 
-// Main function
+// receives messages from the server
+void receiveMessage() {
+    char buffer[MAX_MESSAGE_LENGTH] = {};
+    while (isRunning) {
+        int receive = recv(serverSocket, buffer, MAX_MESSAGE_LENGTH, 0);
+        if (receive > 0) {
+            string message(buffer);
+            string protocol, senderUsername, content;
+            istringstream iss(message);
+            iss >> protocol >> senderUsername;
+            getline(iss, content);
+
+            if (protocol == "MSG") {
+                cout << "[" << senderUsername << "]: " << content.substr(1) << endl;  // remove leading space
+            } else if (protocol == "JOIN") {
+                cout << senderUsername << " has joined the chat." << endl;
+            } else if (protocol == "EXIT") {
+                cout << senderUsername << " has left the chat." << endl;
+            } else if (protocol == "ERROR" && senderUsername == username) {
+                cout << username << ": error - only 255 characters allowed in a message." << endl;
+            }
+            flushOutput();
+        } else if (receive == 0) {
+            cout << "server disconnected. exiting chat..." << endl;
+            isRunning = false;
+            break;
+        } else {
+            cerr << "error: failed to receive message from server." << endl;
+            isRunning = false;
+            break;
+        }
+        memset(buffer, 0, sizeof(buffer));  // clear buffer after each message
+    }
+}
+
+// main function
 int main(int argc, char *argv[]) {
-    // Check command-line arguments
+    // set up signal handler for ctrl+c
+    signal(SIGINT, signalHandler);
+
     if (argc < 3) {
-        std::cout << "Usage: " << argv[0] << " <IP:Port> <Nickname>" << std::endl;
+        cout << "usage: " << argv[0] << " <ip:port> <nickname>" << endl;
         return 0;
     }
 
-    // Parse server IP and port from arguments
-    std::string host, port;
-    std::string serverInfoString = argv[1];  // Renamed to avoid conflict
+    string host, port;
+    string serverInfoString = argv[1];
     size_t colonPos = serverInfoString.find(':');
-    if (colonPos == std::string::npos) {
-        std::cerr << "ERROR: Invalid format. Use <IP:Port>" << std::endl;
+    if (colonPos == string::npos) {
+        cerr << "error: invalid format. use <ip:port>" << endl;
         return 1;
     }
     host = serverInfoString.substr(0, colonPos);
     port = serverInfoString.substr(colonPos + 1);
 
-    // Validate the nickname using regex
-    std::string nickname = argv[2];
-    if (nickname.length() >= MAX_NAME_LENGTH || !std::regex_match(nickname, std::regex("^[A-Za-z0-9_]+$"))) {
-        std::cerr << "ERROR: Invalid nickname. Must be less than " << MAX_NAME_LENGTH << " characters and contain only letters, numbers, or underscores." << std::endl;
+    string nickname = argv[2];
+    if (nickname.length() >= MAX_NAME_LENGTH || !regex_match(nickname, regex("^[A-Za-z0-9_]+$"))) {
+        cerr << "error: invalid nickname. must be less than " << MAX_NAME_LENGTH << " characters and contain only letters, numbers, or underscores." << endl;
         return 1;
     }
     username = nickname;
 
-    // Display connection information
-    std::cout << "Connecting to " << host << ":" << port << " as " << username << "..." << std::endl;
+    cout << "connecting to " << host << ":" << port << " as " << username << "..." << endl;
 
-    // Setup server address info
-    struct addrinfo hints{}, *serverInfo;  // Corrected declaration
+    struct addrinfo hints{}, *serverInfo;
     memset(&hints, 0, sizeof(hints));
     hints.ai_family = AF_UNSPEC;
     hints.ai_socktype = SOCK_STREAM;
 
-    // Resolve server address
     if (getaddrinfo(host.c_str(), port.c_str(), &hints, &serverInfo) != 0) {
-        std::cerr << "ERROR: Error resolving server address." << std::endl;
+        cerr << "error: error resolving server address." << endl;
         return 1;
     }
 
-    // Create a socket
     serverSocket = socket(serverInfo->ai_family, serverInfo->ai_socktype, serverInfo->ai_protocol);
     if (serverSocket == -1) {
-        std::cerr << "ERROR: Error creating socket." << std::endl;
+        cerr << "error: error creating socket." << endl;
         freeaddrinfo(serverInfo);
         return 1;
     }
 
-    // Connect to server
     if (connect(serverSocket, serverInfo->ai_addr, serverInfo->ai_addrlen) == -1) {
-        std::cerr << "ERROR: Error connecting to server." << std::endl;
+        cerr << "error: error connecting to server." << endl;
         close(serverSocket);
         freeaddrinfo(serverInfo);
         return 1;
     }
     freeaddrinfo(serverInfo);
 
-    // Read server protocol greeting
     char serverProtocol[MAX_MESSAGE_LENGTH] = {};
     if (read(serverSocket, serverProtocol, sizeof(serverProtocol)) <= 0) {
-        std::cerr << "ERROR: Error reading server protocol." << std::endl;
+        cerr << "error: error reading server protocol." << endl;
         close(serverSocket);
         return 1;
     }
-    std::cout << "Server Protocol: " << serverProtocol;
+    cout << "server protocol: " << serverProtocol;
+    flushOutput();
 
-    // Verify server protocol
-    if (std::string(serverProtocol) != "HELLO 1\n") {
-        std::cerr << "ERROR: Server protocol not supported." << std::endl;
+    if (string(serverProtocol).find("HELLO 1") == string::npos) {
+        cerr << "error: server protocol not supported." << endl;
         close(serverSocket);
         return 1;
     }
 
-    // Send nickname to server
-    std::string nicknameProtocolMessage = "NICK " + username + "\n";
-    send(serverSocket, nicknameProtocolMessage.c_str(), nicknameProtocolMessage.length(), 0);
+    string nicknameProtocolMessage = "NICK " + username + "\n";
+    if (send(serverSocket, nicknameProtocolMessage.c_str(), nicknameProtocolMessage.length(), 0) == -1) {
+        cerr << "error: failed to send nickname to server." << endl;
+        close(serverSocket);
+        return 1;
+    }
 
-    // Receive server response to nickname
     char response[MAX_MESSAGE_LENGTH] = {};
     if (read(serverSocket, response, sizeof(response)) <= 0) {
-        std::cerr << "ERROR: Error reading server response." << std::endl;
+        cerr << "error: error reading server response." << endl;
         close(serverSocket);
         return 1;
     }
 
-    // Check if nickname is accepted
-    if (std::string(response) != "OK\n") {
-        std::cerr << "ERROR: Nickname not accepted by server." << std::endl;
+    if (string(response).find("OK") == string::npos) {
+        cerr << "error: nickname not accepted by server." << endl;
         close(serverSocket);
         return 1;
     }
 
-    std::cout << "Welcome to the chat!" << std::endl;
+    cout << "welcome to the chat!" << endl;
+    flushOutput();
 
-    // Create threads for sending and receiving messages
-    std::thread sendThread(sendMessage);
-    std::thread receiveThread(receiveMessage);
+    // set up select for non-blocking input and socket monitoring
+    fd_set read_fds;
+    int max_fd = max(serverSocket, STDIN_FILENO);
 
-    // Main loop to keep the application running
     while (isRunning) {
-        // Exit handling
-        std::string command;
-        std::getline(std::cin, command);
-        if (command == "/quit") {
+        FD_ZERO(&read_fds);
+        FD_SET(serverSocket, &read_fds);
+        FD_SET(STDIN_FILENO, &read_fds);
+
+        if (select(max_fd + 1, &read_fds, NULL, NULL, NULL) < 0) {
+            cerr << "error: select() failed." << endl;
             isRunning = false;
+            break;
+        }
+
+        if (FD_ISSET(STDIN_FILENO, &read_fds)) {
+            string message;
+            getline(cin, message);
+            if (message == "/quit") {
+                isRunning = false;
+                string exitMessage = "EXIT " + username + "\n";
+                send(serverSocket, exitMessage.c_str(), exitMessage.length(), 0);
+                break;
+            } else if (message.length() <= 255) {
+                string protocolMessage = "MSG " + message + "\n";
+                send(serverSocket, protocolMessage.c_str(), protocolMessage.length(), 0);
+            } else {
+                cout << "message too long. please limit to 255 characters." << endl;
+                flushOutput();
+            }
+        }
+
+        if (FD_ISSET(serverSocket, &read_fds)) {
+            char buffer[MAX_MESSAGE_LENGTH] = {};
+            int receive = recv(serverSocket, buffer, sizeof(buffer), 0);
+            if (receive > 0) {
+                string message(buffer);
+                string protocol, senderUsername, content;
+                istringstream iss(message);
+                iss >> protocol >> senderUsername;
+                getline(iss, content);
+
+                if (protocol == "MSG") {
+                    cout << "[" << senderUsername << "]: " << content.substr(1) << endl;  // remove leading space
+                } else if (protocol == "JOIN") {
+                    cout << senderUsername << " has joined the chat." << endl;
+                } else if (protocol == "EXIT") {
+                    cout << senderUsername << " has left the chat." << endl;
+                }
+                flushOutput();
+            } else if (receive == 0) {
+                cout << "server disconnected. exiting chat..." << endl;
+                isRunning = false;
+                break;
+            } else {
+                cerr << "error: failed to receive message from server." << endl;
+                isRunning = false;
+                break;
+            }
         }
     }
 
-    // Close socket and exit
-    close(serverSocket);
-    sendThread.join();
-    receiveThread.join();
-    std::cout << "Disconnected from server." << std::endl;
+    close(serverSocket);  // close the socket when done
     return 0;
 }
