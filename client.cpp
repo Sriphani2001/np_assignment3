@@ -42,11 +42,12 @@ void sendMessage() {
         flushOutput();  // flush output before user input
         getline(cin, message);  // read user input
 
-        if (message.length() > 255) {
-            cout << "message too long (" << message.length() << " characters). please limit to 255 characters." << endl;
-            flushOutput();
-            continue;
-        }
+        // Remove the message length restriction
+        // if (message.length() > 255) {
+        //     cout << "message too long (" << message.length() << " characters). please limit to 255 characters." << endl;
+        //     flushOutput();
+        //     continue;
+        // }
 
         string protocolMessage = "MSG " + message + "\n";
         if (send(serverSocket, protocolMessage.c_str(), protocolMessage.length(), 0) == -1) {
@@ -57,28 +58,40 @@ void sendMessage() {
     }
 }
 
-// receives messages from the server
+// receives messages from the server and handles TCP message fragmentation
 void receiveMessage() {
     char buffer[MAX_MESSAGE_LENGTH] = {};
+    string partialMessage = "";  // Buffer to hold partial messages
+
     while (isRunning) {
         int receive = recv(serverSocket, buffer, MAX_MESSAGE_LENGTH, 0);
         if (receive > 0) {
-            string message(buffer);
-            string protocol, senderUsername, content;
-            istringstream iss(message);
-            iss >> protocol >> senderUsername;
-            getline(iss, content);
+            partialMessage += string(buffer, receive);  // Append received data to buffer
 
-            if (protocol == "MSG") {
-                cout << "[" << senderUsername << "]: " << content.substr(1) << endl;  // remove leading space
-            } else if (protocol == "JOIN") {
-                cout << senderUsername << " has joined the chat." << endl;
-            } else if (protocol == "EXIT") {
-                cout << senderUsername << " has left the chat." << endl;
-            } else if (protocol == "ERROR" && senderUsername == username) {
-                cout << username << ": error - only 255 characters allowed in a message." << endl;
+            size_t newlinePos;
+            // Process each complete message (terminated by \n)
+            while ((newlinePos = partialMessage.find('\n')) != string::npos) {
+                string completeMessage = partialMessage.substr(0, newlinePos); // Get the complete message
+                partialMessage.erase(0, newlinePos + 1);  // Remove processed message from buffer
+
+                // Now process the complete message
+                string protocol, senderUsername, content;
+                istringstream iss(completeMessage);
+                iss >> protocol >> senderUsername;
+                getline(iss, content);
+
+                // Check if the message is using the MSG protocol
+                if (protocol == "MSG") {
+                    cout << "[" << senderUsername << "]: " << content.substr(1) << endl;  // Print the message content
+                } else if (protocol == "JOIN") {
+                    cout << senderUsername << " has joined the chat." << endl;
+                } else if (protocol == "EXIT") {
+                    cout << senderUsername << " has left the chat." << endl;
+                } else if (protocol == "ERROR" && senderUsername == username) {
+                    cout << username << ": error - only 255 characters allowed in a message." << endl;
+                }
+                flushOutput();
             }
-            flushOutput();
         } else if (receive == 0) {
             cout << "server disconnected. exiting chat..." << endl;
             isRunning = false;
@@ -88,7 +101,7 @@ void receiveMessage() {
             isRunning = false;
             break;
         }
-        memset(buffer, 0, sizeof(buffer));  // clear buffer after each message
+        memset(buffer, 0, sizeof(buffer));  // Clear buffer after each message
     }
 }
 
@@ -184,68 +197,10 @@ int main(int argc, char *argv[]) {
     cout << "welcome to the chat!" << endl;
     flushOutput();
 
-    // set up select for non-blocking input and socket monitoring
-    fd_set read_fds;
-    int max_fd = max(serverSocket, STDIN_FILENO);
+    thread sendThread(sendMessage);
+    receiveMessage();  // Handle receiving messages in the main thread
 
-    while (isRunning) {
-        FD_ZERO(&read_fds);
-        FD_SET(serverSocket, &read_fds);
-        FD_SET(STDIN_FILENO, &read_fds);
-
-        if (select(max_fd + 1, &read_fds, NULL, NULL, NULL) < 0) {
-            cerr << "error: select() failed." << endl;
-            isRunning = false;
-            break;
-        }
-
-        if (FD_ISSET(STDIN_FILENO, &read_fds)) {
-            string message;
-            getline(cin, message);
-            if (message == "/quit") {
-                isRunning = false;
-                string exitMessage = "EXIT " + username + "\n";
-                send(serverSocket, exitMessage.c_str(), exitMessage.length(), 0);
-                break;
-            } else if (message.length() <= 255) {
-                string protocolMessage = "MSG " + message + "\n";
-                send(serverSocket, protocolMessage.c_str(), protocolMessage.length(), 0);
-            } else {
-                cout << "message too long. please limit to 255 characters." << endl;
-                flushOutput();
-            }
-        }
-
-        if (FD_ISSET(serverSocket, &read_fds)) {
-            char buffer[MAX_MESSAGE_LENGTH] = {};
-            int receive = recv(serverSocket, buffer, sizeof(buffer), 0);
-            if (receive > 0) {
-                string message(buffer);
-                string protocol, senderUsername, content;
-                istringstream iss(message);
-                iss >> protocol >> senderUsername;
-                getline(iss, content);
-
-                if (protocol == "MSG") {
-                    cout << "[" << senderUsername << "]: " << content.substr(1) << endl;  // remove leading space
-                } else if (protocol == "JOIN") {
-                    cout << senderUsername << " has joined the chat." << endl;
-                } else if (protocol == "EXIT") {
-                    cout << senderUsername << " has left the chat." << endl;
-                }
-                flushOutput();
-            } else if (receive == 0) {
-                cout << "server disconnected. exiting chat..." << endl;
-                isRunning = false;
-                break;
-            } else {
-                cerr << "error: failed to receive message from server." << endl;
-                isRunning = false;
-                break;
-            }
-        }
-    }
-
+    sendThread.join();
     close(serverSocket);  // close the socket when done
     return 0;
 }
