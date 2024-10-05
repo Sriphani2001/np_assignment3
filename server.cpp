@@ -23,29 +23,31 @@
 #define OK_MESSAGE "OK\n"
 #define ERROR_MESSAGE "ERROR\n"
 
-std::atomic<unsigned int> client_count(0);
+using namespace std;
+
+atomic<unsigned int> client_count(0);
 int uid = 10;
 
-// Client structure
+// client structure
 struct Client {
     struct sockaddr_in address;
     int sockfd;
     int uid;
-    std::string name;
+    string name;
 };
 
-std::vector<Client*> clients(MAX_CLIENTS, nullptr);
-std::mutex clients_mutex;
+vector<Client*> clients(MAX_CLIENTS, nullptr);
+mutex clients_mutex;
 
-// Utility function to handle errors
-void handle_error(const std::string &message) {
+// utility function to handle errors
+void handle_error(const string &message) {
     perror(message.c_str());
     exit(EXIT_FAILURE);
 }
 
-// Add client to the client list
+// add client to the client list
 void add_client_to_queue(Client *client) {
-    std::lock_guard<std::mutex> lock(clients_mutex);
+    lock_guard<mutex> lock(clients_mutex);
     for (auto &c : clients) {
         if (!c) {
             c = client;
@@ -54,9 +56,9 @@ void add_client_to_queue(Client *client) {
     }
 }
 
-// Remove client from the client list
+// remove client from the client list
 void remove_client_from_queue(int uid) {
-    std::lock_guard<std::mutex> lock(clients_mutex);
+    lock_guard<mutex> lock(clients_mutex);
     for (auto &c : clients) {
         if (c && c->uid == uid) {
             c = nullptr;
@@ -65,21 +67,21 @@ void remove_client_from_queue(int uid) {
     }
 }
 
-// Send message to all clients except the sender
-void send_message_to_all(const std::string &message, int sender_uid) {
-    std::lock_guard<std::mutex> lock(clients_mutex);
+// send message to all clients except the sender
+void send_message_to_all(const string &message, int sender_uid) {
+    lock_guard<mutex> lock(clients_mutex);
     for (auto &c : clients) {
         if (c && c->uid != sender_uid) {
             if (send(c->sockfd, message.c_str(), message.length(), 0) <= 0) {
-                std::cout << "ERROR: Failed to send message to client (uid=" << c->uid << ")\n";
-                fflush(stdout);  // Added flushing of stdout
+                cout << "error: failed to send message to client (uid=" << c->uid << ")\n";
+                fflush(stdout);  // flush to ensure output is shown immediately
                 break;
             }
         }
     }
 }
 
-// Handle client communication
+// handle client communication
 void handle_client(Client *client) {
     char buffer[MAX_BUFFER_SIZE];
     bool leave_flag = false;
@@ -92,39 +94,39 @@ void handle_client(Client *client) {
         int receive = recv(client->sockfd, buffer, MAX_BUFFER_SIZE, 0);
         if (receive > 0) {
             if (strlen(buffer) > 0) {
-                // Validate and parse the incoming message
-                std::string buffer_str(buffer);
-                if (buffer_str.rfind("MSG ", 0) == 0) { // Ensure the message starts with "MSG "
-                    std::string message = buffer_str.substr(4);  // Extract message after "MSG "
-                    message.erase(message.find_last_not_of(" \n\r\t") + 1);  // Remove trailing newline character
+                // validate and parse the incoming message
+                string buffer_str(buffer);
+                if (buffer_str.rfind("MSG ", 0) == 0) { // ensure the message starts with "MSG "
+                    string message = buffer_str.substr(4);  // extract message after "MSG "
+                    message.erase(message.find_last_not_of(" \n\r\t") + 1);  // remove trailing newline character
 
                     if (message.length() <= 255) {
-                        std::string formatted_message = "MSG " + client->name + " " + message + "\n";
-                        std::cout << client->name << ": " << message << std::endl;
-                        fflush(stdout);  // Added flushing of stdout
+                        string formatted_message = "MSG " + client->name + " " + message + "\n";
+                        cout << client->name << ": " << message << endl;
+                        fflush(stdout);  // flush stdout to ensure it is shown immediately
                         send_message_to_all(formatted_message, client->uid);
                     } else {
-                        std::string error_message = "ERROR " + client->name + ": Message too long\n";
+                        string error_message = "ERROR " + client->name + ": message too long\n";
                         send_message_to_all(error_message, client->uid);
                     }
                 } else {
-                    // Invalid message format
-                    std::string error_message = "ERROR Invalid message format\n";
+                    // invalid message format
+                    string error_message = "ERROR invalid message format\n";
                     send(client->sockfd, error_message.c_str(), error_message.length(), 0);
                 }
             }
         } else if (receive == 0) {
-            std::cout << client->name << " left the chat\n";
-            fflush(stdout);  // Added flushing of stdout
-            std::string leave_message = "MSG " + client->name + " has left the chat\n";
+            cout << client->name << " left the chat\n";
+            fflush(stdout);  // flush stdout
+            string leave_message = "MSG " + client->name + " has left the chat\n";
             send_message_to_all(leave_message, client->uid);
             leave_flag = true;
         } else {
-            std::cout << "ERROR: Client (uid=" << client->uid << ") communication error\n";
-            fflush(stdout);  // Added flushing of stdout
+            cout << "error: client (uid=" << client->uid << ") communication error\n";
+            fflush(stdout);  // flush stdout
             leave_flag = true;
         }
-        memset(buffer, 0, MAX_BUFFER_SIZE); // Clear buffer
+        memset(buffer, 0, MAX_BUFFER_SIZE); // clear buffer
     }
 
     close(client->sockfd);
@@ -133,7 +135,7 @@ void handle_client(Client *client) {
     client_count--;
 }
 
-// Initialize server socket
+// initialize server socket with retries for socket creation, setting options, and binding
 int initialize_server_socket(const char *host, const char *port) {
     struct addrinfo hints{}, *res;
     memset(&hints, 0, sizeof(hints));
@@ -142,128 +144,153 @@ int initialize_server_socket(const char *host, const char *port) {
     hints.ai_flags = AI_PASSIVE;
 
     int sockfd;
-    if (getaddrinfo(host, port, &hints, &res) != 0) {
-        handle_error("ERROR: Failed to resolve socket address");
+    int retry_count = 5;
+    while (retry_count--) {
+        if (getaddrinfo(host, port, &hints, &res) != 0) {
+            cerr << "error: failed to resolve socket address. retrying...\n";
+            fflush(stderr);  // flush stderr
+            sleep(1);
+            continue;
+        }
+
+        sockfd = socket(res->ai_family, res->ai_socktype, res->ai_protocol);
+        if (sockfd < 0) {
+            cerr << "error: server socket creation failed. retrying...\n";
+            fflush(stderr);  // flush stderr
+            freeaddrinfo(res);
+            sleep(1);
+            continue;
+        }
+
+        int option = 1;
+        if (setsockopt(sockfd, SOL_SOCKET, (SO_REUSEPORT | SO_REUSEADDR), reinterpret_cast<char*>(&option), sizeof(option)) < 0) {
+            cerr << "error: setsockopt failed. retrying...\n";
+            fflush(stderr);  // flush stderr
+            close(sockfd);
+            freeaddrinfo(res);
+            sleep(1);
+            continue;
+        }
+
+        if (bind(sockfd, res->ai_addr, res->ai_addrlen) < 0) {
+            cerr << "error: server socket bind failed. retrying...\n";
+            fflush(stderr);  // flush stderr
+            close(sockfd);
+            freeaddrinfo(res);
+            sleep(1);
+            continue;
+        }
+
+        freeaddrinfo(res);
+        return sockfd; // successful socket creation and binding
     }
 
-    sockfd = socket(res->ai_family, res->ai_socktype, res->ai_protocol);
-    if (sockfd < 0) handle_error("ERROR: Server socket creation failed");
-
-    int option = 1;
-    if (setsockopt(sockfd, SOL_SOCKET, (SO_REUSEPORT | SO_REUSEADDR), reinterpret_cast<char*>(&option), sizeof(option)) < 0) {
-        handle_error("ERROR: setsockopt failed");
-    }
-
-    if (bind(sockfd, res->ai_addr, res->ai_addrlen) < 0) {
-        handle_error("ERROR: Server socket bind failed");
-    }
-
-    freeaddrinfo(res);
-    return sockfd;
+    handle_error("fatal error: server socket initialization failed after retries");
+    return -1; // should never reach here due to exit in handle_error
 }
 
-// Signal handler for graceful server shutdown
+// signal handler for graceful server shutdown
 void signal_handler(int sig) {
-    std::cout << "\nShutting down server gracefully...\n";
-    fflush(stdout);  // Added flushing of stdout
+    cout << "\nshutting down server gracefully...\n";
+    fflush(stdout);  // flush stdout
     exit(EXIT_SUCCESS);
 }
 
-// Main server function
+// main server function
 int main(int argc, char **argv) {
     if (argc != 2) {
-        std::cerr << "ERROR: Usage: " << argv[0] << " <host:port>\n";
-        fflush(stderr);  // Added flushing of stderr
+        cerr << "error: usage: " << argv[0] << " <host:port>\n";
+        fflush(stderr);  // flush stderr
         return EXIT_FAILURE;
     }
 
-    // Parse host and port from command line argument
+    // parse host and port from command line argument
     char *host = strtok(argv[1], ":");
     char *port = strtok(nullptr, ":");
     if (!host || !port) {
-        std::cerr << "ERROR: Invalid host or port format. Use <host:port>\n";
-        fflush(stderr);  // Added flushing of stderr
+        cerr << "error: invalid host or port format. use <host:port>\n";
+        fflush(stderr);  // flush stderr
         return EXIT_FAILURE;
     }
-    std::cout << "Host: " << host << ", Port: " << port << std::endl;
-    fflush(stdout);  // Added flushing of stdout
+    cout << "host: " << host << ", port: " << port << endl;
+    fflush(stdout);  // flush stdout
 
-    // Register signal handler for graceful shutdown
+    // register signal handler for graceful shutdown
     signal(SIGINT, signal_handler);
 
     int server_sockfd = initialize_server_socket(host, port);
 
-    // Set the server socket to non-blocking mode
+    // set the server socket to non-blocking mode
     fcntl(server_sockfd, F_SETFL, O_NONBLOCK);
 
-    // Listen for incoming connections
+    // listen for incoming connections
     if (listen(server_sockfd, MAX_CLIENTS) < 0) {
-        handle_error("ERROR: Server listen failed");
+        handle_error("error: server listen failed");
     }
-    std::cout << "Server listening on " << host << ":" << port << "...\n";
-    fflush(stdout);  // Added flushing of stdout
+    cout << "server listening on " << host << ":" << port << "...\n";
+    fflush(stdout);  // flush stdout
 
     while (true) {
         struct sockaddr_in client_addr;
         socklen_t client_len = sizeof(client_addr);
         int client_sockfd = accept(server_sockfd, (struct sockaddr*)&client_addr, &client_len);
         if (client_sockfd < 0) {
-            // If no client is ready, continue looping (non-blocking mode)
+            // if no client is ready, continue looping (non-blocking mode)
             continue;
         }
 
         if ((client_count + 1) == MAX_CLIENTS) {
-            std::cerr << "ERROR: Maximum clients reached. Rejected: ";
-            std::cerr << ":" << client_addr.sin_port << std::endl;
-            fflush(stderr);  // Added flushing of stderr
+            cerr << "error: maximum clients reached. rejected: ";
+            cerr << ":" << client_addr.sin_port << endl;
+            fflush(stderr);  // flush stderr
             close(client_sockfd);
             continue;
         }
 
-        // Send protocol version message
+        // send protocol version message
         if (send(client_sockfd, PROTOCOL_MESSAGE, strlen(PROTOCOL_MESSAGE), 0) <= 0) {
-            std::cerr << "ERROR: Failed to send protocol message\n";
-            fflush(stderr);  // Added flushing of stderr
+            cerr << "error: failed to send protocol message\n";
+            fflush(stderr);  // flush stderr
             close(client_sockfd);
             continue;
         }
 
-        // Handle NICK message
+        // handle NICK message
         char nick_buffer[MAX_BUFFER_SIZE] = {0};
         if (recv(client_sockfd, nick_buffer, sizeof(nick_buffer), 0) <= 0) {
-            std::cerr << "ERROR: Receiving NICK message failed\n";
-            fflush(stderr);  // Added flushing of stderr
+            cerr << "error: receiving NICK message failed\n";
+            fflush(stderr);  // flush stderr
             close(client_sockfd);
             continue;
         }
 
-        char client_name[MAX_NAME_LENGTH + 1];  // Ensure space for null terminator
+        char client_name[MAX_NAME_LENGTH + 1];  // ensure space for null terminator
         sscanf(nick_buffer, "NICK %s", client_name);
         client_name[strcspn(client_name, "\n")] = '\0';
 
-        std::regex nickname_regex("^[A-Za-z0-9_]+$");
-        if (std::regex_match(client_name, nickname_regex) && strlen(client_name) <= MAX_NAME_LENGTH) {
+        regex nickname_regex("^[A-Za-z0-9_]+$");
+        if (regex_match(client_name, nickname_regex) && strlen(client_name) <= MAX_NAME_LENGTH) {
             if (send(client_sockfd, OK_MESSAGE, strlen(OK_MESSAGE), 0) <= 0) {
-                std::cerr << "ERROR: Sending OK message failed\n";
-                fflush(stderr);  // Added flushing of stderr
+                cerr << "error: sending OK message failed\n";
+                fflush(stderr);  // flush stderr
                 close(client_sockfd);
                 continue;
             }
 
-            // Add client to queue
+            // add client to queue
             auto *client = new Client;
             client->address = client_addr;
             client->sockfd = client_sockfd;
             client->uid = uid++;
             client->name = client_name;
 
-            std::cout << client->name << " joined the chat\n";
-            fflush(stdout);  // Added flushing of stdout
+            cout << client->name << " joined the chat\n";
+            fflush(stdout);  // flush stdout
             add_client_to_queue(client);
-            std::thread(handle_client, client).detach();
+            thread(handle_client, client).detach();
 
         } else {
-            // Invalid nickname
+            // invalid nickname
             send(client_sockfd, ERROR_MESSAGE, strlen(ERROR_MESSAGE), 0);
             close(client_sockfd);
         }
