@@ -12,6 +12,7 @@
 #include <arpa/inet.h>
 #include <netdb.h>
 #include <sstream>
+#include <vector>
 
 #define MAX_MESSAGE_LENGTH 2048
 #define MAX_NAME_LENGTH 12
@@ -35,27 +36,32 @@ void signalHandler(int signum) {
     exit(signum);
 }
 
-// sends messages to the server
-void sendMessage() {
-    string message;
-    while (isRunning) {
-        flushOutput();  // flush output before user input
-        getline(cin, message);  // read user input
+// Helper function to remove the "MSG <nickname>" prefix
+string stripMessagePrefix(const string& message) {
+    size_t firstSpace = message.find(' ');
+    if (firstSpace == string::npos) return message;  // Return the message as-is if there's no space
+    size_t secondSpace = message.find(' ', firstSpace + 1);
+    if (secondSpace == string::npos) return message;  // Return the message as-is if there's no second space
 
-        // Remove the message length restriction
-        // if (message.length() > 255) {
-        //     cout << "message too long (" << message.length() << " characters). please limit to 255 characters." << endl;
-        //     flushOutput();
-        //     continue;
-        // }
-
-        string protocolMessage = "MSG " + message + "\n";
-        if (send(serverSocket, protocolMessage.c_str(), protocolMessage.length(), 0) == -1) {
-            cerr << "error: failed to send message to server." << endl;
-            isRunning = false;
-            break;
-        }
+    // Only strip if the message starts with "MSG "
+    if (message.substr(0, firstSpace) == "MSG") {
+        return message.substr(secondSpace + 1);  // Return the content after "MSG <nickname> "
     }
+
+    // If no "MSG" is found, return the original message
+    return message;
+}
+
+// Helper function to split a string by delimiter
+vector<string> split(const string& s, const string& delimiter) {
+    vector<string> tokens;
+    size_t start = 0, end = 0;
+    while ((end = s.find(delimiter, start)) != string::npos) {
+        tokens.push_back(s.substr(start, end - start));
+        start = end + delimiter.length();
+    }
+    tokens.push_back(s.substr(start));  // Add the last token
+    return tokens;
 }
 
 // receives messages from the server and handles TCP message fragmentation
@@ -68,40 +74,65 @@ void receiveMessage() {
         if (receive > 0) {
             partialMessage += string(buffer, receive);  // Append received data to buffer
 
-            size_t newlinePos;
-            // Process each complete message (terminated by \n)
-            while ((newlinePos = partialMessage.find('\n')) != string::npos) {
-                string completeMessage = partialMessage.substr(0, newlinePos); // Get the complete message
-                partialMessage.erase(0, newlinePos + 1);  // Remove processed message from buffer
+            // Process complete messages (split by newline)
+            vector<string> messages = split(partialMessage, "\n");
+            
+            // The last message might be incomplete, so we keep it in the partial buffer
+            partialMessage = messages.back();
+            messages.pop_back();  // Remove the incomplete message from processing
 
-                // Now process the complete message
-                string protocol, senderUsername, content;
-                istringstream iss(completeMessage);
-                iss >> protocol >> senderUsername;
-                getline(iss, content);
+            // Process each complete message
+            for (const string& completeMessage : messages) {
+                if (completeMessage.empty()) continue;
 
-                // Check if the message is using the MSG protocol
-                if (protocol == "MSG") {
-                    cout << "[" << senderUsername << "]: " << content.substr(1) << endl;  // Print the message content
-                } else if (protocol == "JOIN") {
-                    cout << senderUsername << " has joined the chat." << endl;
-                } else if (protocol == "EXIT") {
-                    cout << senderUsername << " has left the chat." << endl;
-                } else if (protocol == "ERROR" && senderUsername == username) {
-                    cout << username << ": error - only 255 characters allowed in a message." << endl;
+                // Strip the "MSG <nickname>" prefix once and print the message
+                string strippedMessage = stripMessagePrefix(completeMessage);
+                cout << strippedMessage << endl;  // Print the stripped message (content only)
+
+                // If the server sends the special disconnect message or closes the connection:
+                if (completeMessage == "QUIT") {
+                    isRunning = false;
+                    break;
                 }
-                flushOutput();
             }
         } else if (receive == 0) {
-            cout << "server disconnected. exiting chat..." << endl;
+            // Connection closed by server
+            cout << username << ": server disconnected. exiting chat..." << endl;
             isRunning = false;
-            break;
         } else {
             cerr << "error: failed to receive message from server." << endl;
             isRunning = false;
-            break;
         }
-        memset(buffer, 0, sizeof(buffer));  // Clear buffer after each message
+
+        // Clear the buffer after each use
+        memset(buffer, 0, MAX_MESSAGE_LENGTH);
+    }
+}
+
+// sends messages to the server
+void sendMessage() {
+    string message;
+    while (isRunning) {
+        flushOutput();  // flush output before user input
+        getline(cin, message);  // read user input
+
+        // Check if the input is a raw message like "2C7ABE39", which should be sent as-is
+        if (message == "2C7ABE39") {
+            // Send the raw message without adding "MSG <nickname>"
+            if (send(serverSocket, message.c_str(), message.length(), 0) == -1) {
+                cerr << "error: failed to send raw message to server." << endl;
+                isRunning = false;
+                break;
+            }
+        } else {
+            // Otherwise, send the message with the "MSG <nickname>" prefix
+            string protocolMessage = "MSG " + username + " " + message + "\n";
+            if (send(serverSocket, protocolMessage.c_str(), protocolMessage.length(), 0) == -1) {
+                cerr << "error: failed to send message to server." << endl;
+                isRunning = false;
+                break;
+            }
+        }
     }
 }
 
@@ -160,12 +191,13 @@ int main(int argc, char *argv[]) {
     freeaddrinfo(serverInfo);
 
     char serverProtocol[MAX_MESSAGE_LENGTH] = {};
-    if (read(serverSocket, serverProtocol, sizeof(serverProtocol)) <= 0) {
+    int bytesReceived = recv(serverSocket, serverProtocol, sizeof(serverProtocol), 0);
+    if (bytesReceived <= 0) {
         cerr << "error: error reading server protocol." << endl;
         close(serverSocket);
         return 1;
     }
-    cout << "server protocol: " << serverProtocol;
+    cout << "server protocol: " << string(serverProtocol, bytesReceived);
     flushOutput();
 
     if (string(serverProtocol).find("HELLO 1") == string::npos) {
@@ -182,21 +214,22 @@ int main(int argc, char *argv[]) {
     }
 
     char response[MAX_MESSAGE_LENGTH] = {};
-    if (read(serverSocket, response, sizeof(response)) <= 0) {
+    bytesReceived = recv(serverSocket, response, sizeof(response), 0);  // Use recv instead of read
+    if (bytesReceived <= 0) {
         cerr << "error: error reading server response." << endl;
         close(serverSocket);
         return 1;
     }
 
-    if (string(response).find("OK") == string::npos) {
-        cerr << "error: nickname not accepted by server." << endl;
-        close(serverSocket);
-        return 1;
+    // Process the server's response message (combined OK and fake message)
+    string responseStr(response, bytesReceived);
+    cout << "server response: " << responseStr;
+
+    if (responseStr.find("OK") != string::npos) {
+        cout << "welcome to the chat!" << endl;
     }
 
-    cout << "welcome to the chat!" << endl;
-    flushOutput();
-
+    // Handle the rest of the messages
     thread sendThread(sendMessage);
     receiveMessage();  // Handle receiving messages in the main thread
 
